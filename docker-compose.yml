@@ -19,16 +19,16 @@ services:
       
   backend:
     container_name: backend
-    restart: on-failure
     build:
       context: .
       dockerfile: Dockerfile
+    restart: on-failure
     env_file:
       - .env
     ports:
       - '8080:8080'
     depends_on:
-      db:
+      postgres:
         condition: service_healthy
 volumes:
   postgres_data:
