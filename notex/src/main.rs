@@ -57,17 +57,12 @@ const UNAUTHORIZED_RESPONSE: &str = "HTTP/1.1 401 UNAUTHORIZED\r\n\r\n";
 
 //main function
 fn main() {
-    //Set database
     if let Err(e) = set_database() {
         println!("Error: {}", e);
         return;
     }
-
-    //start server and print port
     let listener = TcpListener::bind(format!("0.0.0.0:8080")).unwrap();
     println!("Server started at port http://0.0.0.0:8080");
-
-    //handle the client
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
@@ -109,8 +104,6 @@ fn handle_client(mut stream: TcpStream) {
 }
 
 //CONTROLLERS
-
-//handle_post_request function
 fn create_user(_request: &str) -> (String, String) {
     let request_data = get_header_and_body_request(_request);
     let body: Result<User, serde_json::Error> = serde_json::from_str(&request_data.body);
