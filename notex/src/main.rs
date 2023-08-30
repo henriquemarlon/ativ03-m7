@@ -50,7 +50,7 @@ const SECRET: &[u8] = dotenv!("JWT_SECRET_KEY").as_bytes();
 const DB_URL: &str = dotenv!("DATABASE_URL");
 
 //constants
-const OK_RESPONSE: &str = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n";
+const OK_RESPONSE: &str = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: POST, GET, OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type, Authorization\r\nAccess-Control-Allow-Credentials: true\r\nAccess-Control-Expose-Headers: Custom-Header1, Custom-Header2\r\nAccess-Control-Max-Age: 86400\r\n\r\n";
 const NOT_FOUND: &str = "HTTP/1.1 404 NOT FOUND\r\n\r\n";
 const INTERNAL_SERVER_ERROR: &str = "HTTP/1.1 500 INTERNAL SERVER ERROR\r\n\r\n";
 const UNAUTHORIZED_RESPONSE: &str = "HTTP/1.1 401 UNAUTHORIZED\r\n\r\n";
@@ -90,6 +90,7 @@ fn handle_client(mut stream: TcpStream) {
             request.push_str(String::from_utf8_lossy(&buffer[..size]).as_ref());
 
             let (status_line, content) = match &*request {
+                r if r.starts_with("OPTIONS") => (OK_RESPONSE.to_string(), "".to_string()),
                 r if r.starts_with("POST /user/create") => create_user(r),
                 r if r.starts_with("POST /user/login") => login(r),
                 r if r.starts_with("POST /post/create") => create_post(r),
@@ -97,9 +98,9 @@ fn handle_client(mut stream: TcpStream) {
                 _ => (NOT_FOUND.to_string(), "404 Not Found".to_string()),
             };
 
-            stream
-                .write_all(format!("{}{}", status_line, content).as_bytes())
-                .unwrap();
+            let response = format!("{}{}", status_line, content);
+
+            stream.write_all(response.as_bytes()).unwrap();
         }
         Err(e) => {
             println!("Error: {}", e);

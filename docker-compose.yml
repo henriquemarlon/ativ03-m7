@@ -5,6 +5,8 @@ services:
     image: postgres:latest
     ports:
       - "5432:5432"
+    env_file:
+      - ./notex/.env
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-db}
       POSTGRES_USER: ${POSTGRES_USER:-user}
@@ -28,11 +30,28 @@ services:
   backend:
     container_name: backend
     restart: on-failure
-    image: henriquemarlon/notex:1.0.0
+    env_file:
+      - ./notex/.env
+    image: henriquemarlon/notex-backend:1.0.1
+    # build:
+    #   context: ./notex
+    #   dockerfile: Dockerfile
     ports:
       - "8080:8080"
     depends_on:
       postgres:
         condition: service_healthy
+    
+  frontend:
+    container_name: frontend
+    restart: on-failure
+    image: henriquemarlon/notex-frontend:1.0.0
+    # build:
+    #   context: ./notex_frontend
+    #   dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
 volumes:
   postgres_data:
