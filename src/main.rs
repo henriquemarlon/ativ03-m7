@@ -1,7 +1,10 @@
-use postgres::{ Client, NoTls };
+use bcrypt::{hash, verify};
+use jsonwebtoken::errors::Error as JWTError;
+use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use postgres::Error as PostgresError;
-use std::net::{ TcpListener, TcpStream };
-use std::io::{ Read, Write };
+use postgres::{Client, NoTls};
+use std::io::{Read, Write};
+use std::net::{TcpListener, TcpStream};
 
 #[macro_use]
 extern crate serde_derive;
@@ -9,24 +12,39 @@ extern crate serde_derive;
 #[macro_use]
 extern crate dotenv_codegen;
 
-//Model: USer struct with id, name, email
+#[derive(Serialize, Deserialize)]
+struct RequestData {
+    header: String,
+    body: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct Claims {
+    iss: String,
+    sub: String,
+    exp: usize,
+}
+
+//Model: User struct with id, name, email
 #[derive(Serialize, Deserialize)]
 struct User {
     id: Option<i32>,
     username: String,
     email: String,
-    hashed_password: String,
+    password: String,
 }
 
+//Model: Post struct with id, created_at, updated_at, title, content, author_id
 #[derive(Serialize, Deserialize)]
 struct Post {
     id: Option<i32>,
-    created_at: Option<String>,
-    updated_at: Option<String>,
     title: String,
     content: String,
     author_id: Option<i32>,
 }
+
+//SECRET
+const SECRET: &[u8] = dotenv!("JWT_SECRET_KEY").as_bytes();
 
 //DATABASE_URL
 const DB_URL: &str = dotenv!("DATABASE_URL");
@@ -35,6 +53,7 @@ const DB_URL: &str = dotenv!("DATABASE_URL");
 const OK_RESPONSE: &str = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n";
 const NOT_FOUND: &str = "HTTP/1.1 404 NOT FOUND\r\n\r\n";
 const INTERNAL_SERVER_ERROR: &str = "HTTP/1.1 500 INTERNAL SERVER ERROR\r\n\r\n";
+const UNAUTHORIZED_RESPONSE: &str = "HTTP/1.1 401 UNAUTHORIZED\r\n\r\n";
 
 //main function
 fn main() {
@@ -46,7 +65,7 @@ fn main() {
 
     //start server and print port
     let listener = TcpListener::bind(format!("0.0.0.0:8080")).unwrap();
-    println!("Server started at port 8080");
+    println!("Server started at port http://0.0.0.0:8080");
 
     //handle the client
     for stream in listener.incoming() {
@@ -71,15 +90,16 @@ fn handle_client(mut stream: TcpStream) {
             request.push_str(String::from_utf8_lossy(&buffer[..size]).as_ref());
 
             let (status_line, content) = match &*request {
-                r if r.starts_with("POST /users") => handle_post_request(r),
-                r if r.starts_with("GET /users/") => handle_get_request(r),
-                r if r.starts_with("GET /users") => handle_get_all_request(r),
-                r if r.starts_with("PUT /users/") => handle_put_request(r),
-                r if r.starts_with("DELETE /users/") => handle_delete_request(r),
+                r if r.starts_with("POST /user/create") => create_user(r),
+                r if r.starts_with("POST /user/login") => login(r),
+                r if r.starts_with("POST /post/create") => create_post(r),
+                r if r.starts_with("GET /post/get") => get_all_posts_by_author(r),
                 _ => (NOT_FOUND.to_string(), "404 Not Found".to_string()),
             };
 
-            stream.write_all(format!("{}{}", status_line, content).as_bytes()).unwrap();
+            stream
+                .write_all(format!("{}{}", status_line, content).as_bytes())
+                .unwrap();
         }
         Err(e) => {
             println!("Error: {}", e);
@@ -90,13 +110,16 @@ fn handle_client(mut stream: TcpStream) {
 //CONTROLLERS
 
 //handle_post_request function
-fn create_user(request: &str) -> (String, String) {
-    match (get_user_request_body(&request), Client::connect(DB_URL, NoTls)) {
+fn create_user(_request: &str) -> (String, String) {
+    let request_data = get_header_and_body_request(_request);
+    let body: Result<User, serde_json::Error> = serde_json::from_str(&request_data.body);
+    match (body, Client::connect(DB_URL, NoTls)) {
         (Ok(user), Ok(mut client)) => {
+            let hashed_password = store_password(&user.password).unwrap();
             client
                 .execute(
-                    "INSERT INTO users (username, email, hashed_password) VALUES ($1, $2, $3)",
-                    &[&user.username, &user.email, &user.hashed_password]
+                    "INSERT INTO users (name, email, password) VALUES ($1, $2, $3)",
+                    &[&user.username, &user.email, &hashed_password],
                 )
                 .unwrap();
 
@@ -106,121 +129,208 @@ fn create_user(request: &str) -> (String, String) {
     }
 }
 
-//handle_get_request function
-fn login(request: &str) -> (String, String) {
-    match (get_id(&request).parse::<i32>(), Client::connect(DB_URL, NoTls)) {
-        (Ok(id), Ok(mut client)) =>
-            match client.query_one("SELECT * FROM users WHERE id = $1", &[&id]) {
-                Ok(row) => {
-                    let user = User {
-                        id: row.get(0),
-                        username: row.get(1),
-                        email: row.get(2),
-                        hashed_password: row.get(3),
-                    };
-                    (OK_RESPONSE.to_string(), serde_json::to_string(&user).unwrap())
-                }
-                _ => (NOT_FOUND.to_string(), "Email and password do not match".to_string()),
-            }
-
-        _ => (INTERNAL_SERVER_ERROR.to_string(), "Error".to_string()),
-    }
-}
-
-//handle_get_all_request function
-fn handle_get_all_request(request: &str) -> (String, String) {
-    match Client::connect(DB_URL, NoTls) {
-        Ok(mut client) => {
-            let mut users = Vec::new();
-
-            for row in client.query("SELECT * FROM users", &[]).unwrap() {
-                users.push(User {
-                    id: row.get(0),
-                    username: row.get(1),
-                    email: row.get(2),
-                    hashed_password: row.get(3),
-                });
-            }
-
-            (OK_RESPONSE.to_string(), serde_json::to_string(&users).unwrap())
-        }
-        _ => (INTERNAL_SERVER_ERROR.to_string(), "Error".to_string()),
-    }
-}
-
-//handle_put_request function
-fn handle_put_request(request: &str) -> (String, String) {
-    match
-        (
-            get_id(&request).parse::<i32>(),
-            get_user_request_body(&request),
-            Client::connect(DB_URL, NoTls),
-        )
-    {
-        (Ok(id), Ok(user), Ok(mut client)) => {
-            client
-                .execute(
-                    "UPDATE users SET name = $1, email = $2 WHERE id = $3",
-                    &[&user.email, &user.hashed_password, &id]
-                )
+fn login(_request: &str) -> (String, String) {
+    let request_data = get_header_and_body_request(_request);
+    let body: Result<User, serde_json::Error> = serde_json::from_str(&request_data.body);
+    match (body, Client::connect(DB_URL, NoTls)) {
+        (Ok(user), Ok(mut client)) => {
+            let row = client
+                .query_one("SELECT * FROM users WHERE email = $1", &[&user.email])
                 .unwrap();
 
-            (OK_RESPONSE.to_string(), "User updated".to_string())
-        }
-        _ => (INTERNAL_SERVER_ERROR.to_string(), "Error".to_string()),
-    }
-}
+            let user_data = User {
+                id: row.get(0),
+                username: row.get(1),
+                email: row.get(2),
+                password: row.get(3),
+            };
 
-//handle_delete_request function
-fn handle_delete_request(request: &str) -> (String, String) {
-    match (get_id(&request).parse::<i32>(), Client::connect(DB_URL, NoTls)) {
-        (Ok(id), Ok(mut client)) => {
-            let rows_affected = client.execute("DELETE FROM users WHERE id = $1", &[&id]).unwrap();
+            let is_valid = verify_password(&user.password, &user_data.password).unwrap();
 
-            if rows_affected == 0 {
-                return (NOT_FOUND.to_string(), "User not found".to_string());
+            if user_data.username != user.username {
+                return (
+                    INTERNAL_SERVER_ERROR.to_string(),
+                    "Invalid username".to_string(),
+                );
+            } else if user_data.email != user.email {
+                return (
+                    INTERNAL_SERVER_ERROR.to_string(),
+                    "Invalid email".to_string(),
+                );
             }
-
-            (OK_RESPONSE.to_string(), "User deleted".to_string())
+            if is_valid {
+                let token = generate_token(&user_data.id.unwrap().to_string()).unwrap();
+                return (OK_RESPONSE.to_string(), token);
+            } else {
+                return (
+                    INTERNAL_SERVER_ERROR.to_string(),
+                    "Invalid password".to_string(),
+                );
+            }
         }
-        _ => (INTERNAL_SERVER_ERROR.to_string(), "Error".to_string()),
+        (Err(e), _) => (
+            INTERNAL_SERVER_ERROR.to_string(),
+            format!("Error parsing user data: {}", e),
+        ),
+        (_, Err(e)) => (
+            INTERNAL_SERVER_ERROR.to_string(),
+            format!("Error connecting to database: {}", e),
+        ),
     }
 }
 
-//set_database function
+fn create_post(_request: &str) -> (String, String) {
+    let request_data = get_header_and_body_request(_request);
+    let token = extract_token_from_header(&request_data.header);
+    let body: Result<Post, serde_json::Error> = serde_json::from_str(&request_data.body);
+    let token_validation = validate_token(token);
+    let db_connection = Client::connect(DB_URL, NoTls);
+
+    match (token_validation, body, db_connection) {
+        (Ok(claim), Ok(post), Ok(mut client)) => {
+            let author_id: i32 = claim.sub.parse().unwrap_or(0);
+            if let Err(e) = client.execute(
+                "INSERT INTO posts (title, content, author_id) VALUES ($1, $2, $3)",
+                &[&post.title, &post.content, &author_id],
+            ) {
+                println!("Error: {}", e);
+                return (
+                    INTERNAL_SERVER_ERROR.to_string(),
+                    "Error inserting post".to_string(),
+                );
+            }
+            (OK_RESPONSE.to_string(), "Post created".to_string())
+        }
+        (Err(_), _, _) => (
+            UNAUTHORIZED_RESPONSE.to_string(),
+            "Invalid token".to_string(),
+        ),
+        (_, Err(_), _) => (
+            INTERNAL_SERVER_ERROR.to_string(),
+            "Error parsing post data".to_string(),
+        ),
+        (_, _, Err(_)) => (
+            INTERNAL_SERVER_ERROR.to_string(),
+            "Error connecting to database".to_string(),
+        ),
+    }
+}
+
+fn get_all_posts_by_author(_request: &str) -> (String, String) {
+    let request_data = get_header_and_body_request(_request);
+    let token_data = validate_token(extract_token_from_header(&request_data.header));
+    match token_data {
+        Ok(claim) => match Client::connect(DB_URL, NoTls) {
+            Ok(mut client) => {
+                let author_id: i32 = claim
+                    .sub
+                    .parse()
+                    .expect("Failed to convert claim.sub to i32");
+                let mut post_list = vec![];
+                for row in client
+                    .query("SELECT * FROM posts WHERE author_id = $1", &[&author_id])
+                    .unwrap()
+                {
+                    let post = Post {
+                        id: row.get(0),
+                        title: row.get(1),
+                        content: row.get(2),
+                        author_id: row.get(3),
+                    };
+                    post_list.push(post);
+                }
+                (
+                    OK_RESPONSE.to_string(),
+                    serde_json::to_string(&post_list).unwrap(),
+                )
+            }
+            Err(_) => (
+                INTERNAL_SERVER_ERROR.to_string(),
+                "Error connecting to database".to_string(),
+            ),
+        },
+        Err(_) => (
+            UNAUTHORIZED_RESPONSE.to_string(),
+            "Invalid token".to_string(),
+        ),
+    }
+}
+
 fn set_database() -> Result<(), PostgresError> {
-    //Connect to database
+    dotenv::dotenv().ok();
     let mut client = Client::connect(DB_URL, NoTls)?;
 
-    //Create table
     client.batch_execute(
         "CREATE TABLE IF NOT EXISTS users (
             id SERIAL PRIMARY KEY,
-            username VARCHAR NOT NULL,
             name VARCHAR NOT NULL,
-            email VARCHAR NOT NULL
-        )"
+            email VARCHAR NOT NULL,
+            password VARCHAR NOT NULL
+        )",
     )?;
 
     client.batch_execute(
-        "CREATE TABLE Post (
-            id serial PRIMARY KEY,
-            createdAt timestamp DEFAULT current_timestamp(),
-            updatedAt timestamp,
-            title varchar(255),
-            content text,
-            authorId integer
-          )",
+        "CREATE TABLE IF NOT EXISTS posts (
+            id SERIAL PRIMARY KEY,
+            title VARCHAR NOT NULL,
+            content VARCHAR NOT NULL,
+            author_id INTEGER NOT NULL REFERENCES users(id)
+        )",
     )?;
     Ok(())
 }
 
-//get_id function
-fn get_id(request: &str) -> &str {
-    request.split("/").nth(2).unwrap_or_default().split_whitespace().next().unwrap_or_default()
+fn generate_token(user_id: &str) -> Result<String, JWTError> {
+    dotenv::dotenv().ok();
+    let encoding_key: EncodingKey = EncodingKey::from_secret(SECRET.as_ref());
+    let expiration = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as usize
+        + 3600;
+    let claims = Claims {
+        iss: "notex".to_string(),
+        sub: user_id.to_string(),
+        exp: expiration,
+    };
+    encode(&Header::default(), &claims, &encoding_key)
 }
 
-//deserialize user from request body with the id
-fn get_user_request_body(request: &str) -> Result<User, serde_json::Error> {
-    serde_json::from_str(request.split("\r\n\r\n").last().unwrap_or_default())
+fn validate_token(token: &str) -> Result<Claims, JWTError> {
+    dotenv::dotenv().ok();
+    let encoding_key: DecodingKey = DecodingKey::from_secret(SECRET.as_ref());
+    let mut issuers = std::collections::HashSet::new();
+    issuers.insert("notex".to_string());
+    let mut validation = Validation::new(Algorithm::HS256);
+    validation.iss = Some(issuers);
+    validation.leeway = 60;
+    validation.validate_exp = true;
+    validation.validate_nbf = false;
+    validation.aud = None;
+    validation.sub = None;
+    decode::<Claims>(token, &encoding_key, &validation).map(|data| data.claims)
+}
+
+fn store_password(plain: &str) -> Result<String, bcrypt::BcryptError> {
+    hash(plain, 4)
+}
+
+fn verify_password(plain: &str, hashed: &str) -> Result<bool, bcrypt::BcryptError> {
+    verify(plain, hashed)
+}
+
+fn get_header_and_body_request(request: &str) -> RequestData {
+    let req: Vec<&str> = request.split("\r\n\r\n").collect();
+    let header = req.get(0).unwrap_or(&"").to_string();
+    let body = req.get(1).unwrap_or(&"").to_string();
+    RequestData { header, body }
+}
+
+fn extract_token_from_header(header: &str) -> &str {
+    for line in header.lines() {
+        if line.starts_with("Authorization: Bearer ") {
+            return line.split_whitespace().nth(2).unwrap_or("");
+        }
+    }
+    ""
 }
