@@ -1,4 +1,4 @@
-version: '3.9'
+version: "3.9"
 
 services:
   postgres:
@@ -6,30 +6,33 @@ services:
     ports:
       - "5432:5432"
     environment:
-      POSTGRES_DB: db
-      POSTGRES_USER: user
-      POSTGRES_PASSWORD: password
+      POSTGRES_DB: ${POSTGRES_DB:-db}
+      POSTGRES_USER: ${POSTGRES_USER:-user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD", "pg_isready", "-d", "db", "-U", "user"]
+      test:
+        [
+          "CMD",
+          "pg_isready",
+          "-d",
+          "${POSTGRES_DB:-db}",
+          "-U",
+          "${POSTGRES_USER:-user}",
+        ]
       interval: 5s
       timeout: 5s
       retries: 5
-      
+
   backend:
     container_name: backend
-    build:
-      context: .
-      dockerfile: Dockerfile
     restart: on-failure
-    env_file:
-      - .env
+    image: henriquemarlon/notex:1.0.0
     ports:
-      - '8080:8080'
+      - "8080:8080"
     depends_on:
       postgres:
         condition: service_healthy
 volumes:
   postgres_data:
-

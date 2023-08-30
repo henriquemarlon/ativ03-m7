@@ -1,10 +1,9 @@
 # Build stage
-FROM rust:latest as builder
+FROM rust:1.69-buster as builder
 
 WORKDIR /app
 
-# accept the build argument
-COPY . . 
+COPY . .
 
 RUN cargo build --release
 
@@ -15,4 +14,4 @@ WORKDIR /usr/local/bin
 
 COPY --from=builder /app/target/release/notex .
 
-CMD ["./rust-crud-api"]
+CMD ["./notex"]
