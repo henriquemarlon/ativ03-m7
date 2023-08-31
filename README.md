@@ -63,5 +63,36 @@ Este projeto utiliza um volume chamado `postgres_data` para persistir os dados d
 
 ## Arquitetura da Aplicação:
 <p align="center">
-  <img src="URL_DA_IMAGEM" alt="Descrição da Imagem">
+  <img src="./arquitetura.jpeg" alt="Arquitetura da Solução">
 </p>
+
+## Detalhamento:
+Peço desculpas pelo equívoco. Vamos corrigir a descrição:
+
+### Arquitetura da Solução:
+
+#### 1. **PostgreSQL**:
+- **Imagem**: A solução utiliza a imagem oficial `postgres:latest` do Docker Hub.
+- **Portas**: A porta padrão do PostgreSQL, 5432, é mapeada para a mesma porta no host.
+- **Configuração**: As variáveis de ambiente para o serviço PostgreSQL são definidas usando um arquivo `.env` localizado em `./notex/.env`. Se as variáveis não estiverem definidas no arquivo `.env`, valores padrão são usados (por exemplo, `POSTGRES_DB` tem um valor padrão de "db").
+- **Persistência**: Um volume chamado `postgres_data` é usado para persistir os dados do banco de dados. Este volume é montado no diretório `/var/lib/postgresql/data` dentro do container.
+- **Healthcheck**: Um healthcheck é configurado para verificar a saúde do serviço PostgreSQL. Ele usa o comando `pg_isready` para verificar se o banco de dados está pronto para aceitar conexões.
+
+#### 2. **Backend**:
+- **Imagem**: A solução utiliza uma imagem personalizada `henriquemarlon/notex-backend:1.0.1` para o backend.
+- **Linguagem**: O backend é escrito em Rust e não utiliza nenhum framework específico. Ele é responsável por interagir com o banco de dados PostgreSQL e fornecer APIs ou endpoints necessários.
+- **Portas**: A porta 8080 do container é mapeada para a mesma porta no host.
+- **Dependência**: O serviço backend depende do serviço PostgreSQL. Ele só será iniciado quando o serviço PostgreSQL estiver saudável (graças à condição `service_healthy`).
+
+#### 3. **Frontend**:
+- **Imagem**: A solução utiliza uma imagem personalizada `henriquemarlon/notex-frontend:1.0.0` para o frontend.
+- **Conteúdo**: Esta imagem serve os arquivos estáticos (HTML, JS, CSS) que estão em um arquivo `index.html`.
+- **Linguagem e Framework**: O frontend é escrito em Rust e utiliza o framework `warp` para servir a página web e os arquivos estáticos.
+- **Portas**: A porta 3000 do container é mapeada para a mesma porta no host.
+- **Dependência**: O serviço frontend depende do serviço backend. Ele só será iniciado após o backend estar em execução.
+
+#### **Orquestração com Docker Compose**:
+- **Versão**: A versão do Docker Compose usada é a "3.9".
+- **Volumes**: Além dos serviços, um volume chamado `postgres_data` é definido no nível raiz do arquivo Docker Compose para persistir os dados do PostgreSQL.
+
+Em resumo, esta arquitetura define uma solução completa de três partes: um banco de dados PostgreSQL, um backend escrito em Rust sem o uso de frameworks, e um frontend escrito em Rust com o framework `warp` servindo conteúdo estático. Tudo isso é orquestrado usando Docker Compose, garantindo que os serviços sejam iniciados na ordem correta e com as dependências necessárias.
