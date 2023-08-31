@@ -1,4 +1,4 @@
-# Notex Projeto
+# Notex
 
 Este projeto consiste em três serviços principais: um banco de dados PostgreSQL, um backend e um frontend, todos orquestrados usando Docker Compose.
 
