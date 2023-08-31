@@ -67,7 +67,6 @@ Este projeto utiliza um volume chamado `postgres_data` para persistir os dados d
 </p>
 
 ## Detalhamento:
-Peço desculpas pelo equívoco. Vamos corrigir a descrição:
 
 ### Arquitetura da Solução:
 
