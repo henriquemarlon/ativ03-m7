@@ -1,2 +1,2 @@
-env: .env.tmpl
-	cp .env.tmpl .env
+env: ./notex/.env.tmpl
+	cp ./notex/.env.tmpl ./notex/.env
