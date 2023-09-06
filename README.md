@@ -9,7 +9,7 @@ Este projeto consiste em três serviços principais: um banco de dados PostgreSQ
 
 ## Configuração
 
-1. **Arquivo .env**: Certifique-se de ter um arquivo `.env` dentro do diretório `notex`. Para isso, rode:
+1. **Arquivo .env**:Rode o comando abaixo em um ambiente linux e certifique-se de ter um arquivo `.env` dentro do diretório `notex`. Para isso, rode (a criação deve ser manual para ambiente windows):
 
 ```bash
 make env
